@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ArrowLeft, ExternalLink, Loader2, Mail, Phone, ShieldCheck } from "lucide-react";
+import { ArrowLeft, CheckCircle2, Copy, ExternalLink, Loader2, Phone, QrCode, ShieldCheck } from "lucide-react";
+import { QRCodeSVG } from "qrcode.react";
 import {
   Dialog,
   DialogContent,
@@ -19,39 +20,65 @@ interface CheckoutModalProps {
   onClose: () => void;
 }
 
+interface PixPaymentResponse {
+  mode: "pix" | "checkout";
+  pixCode?: string;
+  qrCodeImage?: string | null;
+  expiresAt?: string | null;
+  checkoutUrl?: string;
+  message?: string;
+}
+
+const formatPrice = (price: number) => `R$ ${price.toFixed(2).replace(".", ",")}`;
+
 const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
-  const [step, setStep] = useState<1 | 2>(1);
+  const [step, setStep] = useState<1 | 2 | 3>(1);
   const [contact, setContact] = useState("");
-  const [isRedirecting, setIsRedirecting] = useState(false);
+  const [isGeneratingPayment, setIsGeneratingPayment] = useState(false);
+  const [paymentResult, setPaymentResult] = useState<PixPaymentResponse | null>(null);
   const { toast } = useToast();
 
-  const handleClose = () => {
+  const resetState = () => {
     setStep(1);
     setContact("");
-    setIsRedirecting(false);
+    setIsGeneratingPayment(false);
+    setPaymentResult(null);
+  };
+
+  const handleClose = () => {
+    resetState();
     onClose();
   };
 
-  const handleNext = () => {
+  const validateStepOne = () => {
     if (!contact.trim()) {
       toast({
         title: "Campo obrigatorio",
-        description: "Informe seu WhatsApp ou email para continuar.",
+        description: "Informe seu WhatsApp para continuar.",
         variant: "destructive",
       });
+      return false;
+    }
+
+    return true;
+  };
+
+  const handleNext = () => {
+    if (!validateStepOne()) {
       return;
     }
 
     setStep(2);
   };
 
-  const handleOpenCheckout = async () => {
+  const handleGeneratePix = async () => {
     if (!product) return;
+    if (!validateStepOne()) return;
 
-    setIsRedirecting(true);
+    setIsGeneratingPayment(true);
 
     try {
-      const response = await fetch("/api/sigilopay/checkout", {
+      const response = await fetch("/api/sigilopay/pix", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -59,24 +86,45 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
         body: JSON.stringify({
           product,
           contact,
+          customerName: "Cliente Site",
           origin: window.location.origin,
         }),
       });
 
       const data = await response.json();
 
-      if (!response.ok || !data?.checkoutUrl) {
-        throw new Error(data?.message ?? "Nao foi possivel iniciar o checkout.");
+      if (!response.ok || !data?.mode) {
+        throw new Error(data?.message ?? "Nao foi possivel gerar o pagamento agora.");
       }
 
-      window.location.assign(data.checkoutUrl);
+      setPaymentResult(data);
+      setStep(3);
     } catch (error) {
       toast({
-        title: "Falha ao abrir o checkout",
+        title: "Falha ao gerar o pagamento",
         description: error instanceof Error ? error.message : "Tente novamente em instantes.",
         variant: "destructive",
       });
-      setIsRedirecting(false);
+    } finally {
+      setIsGeneratingPayment(false);
+    }
+  };
+
+  const handleCopyPix = async () => {
+    if (!paymentResult?.pixCode) return;
+
+    try {
+      await navigator.clipboard.writeText(paymentResult.pixCode);
+      toast({
+        title: "PIX copiado",
+        description: "O codigo PIX foi copiado para a area de transferencia.",
+      });
+    } catch {
+      toast({
+        title: "Nao foi possivel copiar",
+        description: "Copie o codigo manualmente abaixo.",
+        variant: "destructive",
+      });
     }
   };
 
@@ -96,7 +144,7 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
                 </span>
                 <DialogTitle className="text-4xl leading-none text-foreground">Finalizar compra</DialogTitle>
                 <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
-                  Informe o seu WhatsApp ou e-mail onde será enviado.
+                  Informe o seu WhatsApp ou e-mail onde sera enviado.
                 </DialogDescription>
               </DialogHeader>
 
@@ -105,29 +153,21 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
                   Produto selecionado
                 </p>
                 <p className="mt-2 text-2xl leading-none text-foreground">{product.name}</p>
-                <p className="mt-2 text-sm uppercase tracking-[0.18em] text-muted-foreground">
-                  {product.duration}
-                </p>
-                <p className="mt-4 text-4xl font-black leading-none text-primary">
-                  R$ {product.price.toFixed(2).replace(".", ",")}
-                </p>
+                <p className="mt-2 text-sm uppercase tracking-[0.18em] text-muted-foreground">{product.duration}</p>
+                <p className="mt-4 text-4xl font-black leading-none text-primary">{formatPrice(product.price)}</p>
               </div>
 
               <div className="space-y-2">
                 <Label htmlFor="contact" className="text-xs font-semibold uppercase tracking-[0.22em] text-muted-foreground">
-                  WhatsApp ou email
+                  WhatsApp
                 </Label>
                 <div className="relative">
                   <div className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-primary/60">
-                    {contact.includes("@") ? (
-                      <Mail className="h-4 w-4" />
-                    ) : (
-                      <Phone className="h-4 w-4" />
-                    )}
+                    <Phone className="h-4 w-4" />
                   </div>
                   <Input
                     id="contact"
-                    placeholder="(11) 99999-9999 ou email@exemplo.com"
+                    placeholder="(11) 99999-9999"
                     value={contact}
                     onChange={(event) => setContact(event.target.value)}
                     className="h-12 rounded-full border-primary/15 bg-white/[0.04] pl-11 text-foreground placeholder:text-muted-foreground focus-visible:ring-primary"
@@ -143,7 +183,9 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
                 Continuar
               </Button>
             </>
-          ) : (
+          ) : null}
+
+          {step === 2 ? (
             <>
               <DialogHeader className="space-y-3 text-left">
                 <DialogTitle className="flex items-center gap-2 text-4xl leading-none text-foreground">
@@ -153,7 +195,7 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
                   >
                     <ArrowLeft className="h-4 w-4" />
                   </button>
-                  Revisao final
+                  Confirmar dados
                 </DialogTitle>
                 <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
                   Voce sera redirecionado para a pagina de pagamento segura.
@@ -167,42 +209,121 @@ const CheckoutModal = ({ product, open, onClose }: CheckoutModalProps) => {
                 </div>
 
                 <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Contato</p>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">WhatsApp</p>
                   <p className="mt-2 break-all text-sm text-foreground">{contact}</p>
                 </div>
 
                 <div>
                   <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Valor</p>
-                  <p className="mt-2 text-4xl font-black leading-none text-primary">
-                    R$ {product.price.toFixed(2).replace(".", ",")}
-                  </p>
+                  <p className="mt-2 text-4xl font-black leading-none text-primary">{formatPrice(product.price)}</p>
                 </div>
               </div>
 
               <Button
-                onClick={handleOpenCheckout}
+                onClick={handleGeneratePix}
                 className="h-12 w-full rounded-full bg-primary text-base font-extrabold uppercase tracking-[0.16em] text-primary-foreground hover:bg-primary"
                 size="lg"
-                disabled={isRedirecting}
+                disabled={isGeneratingPayment}
               >
-                {isRedirecting ? (
+                {isGeneratingPayment ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    Abrindo checkout...
+                    Gerando PIX...
                   </>
                 ) : (
                   <>
-                    <ExternalLink className="h-4 w-4" />
-                    Ir para o pagamento
+                    <QrCode className="h-4 w-4" />
+                    Gerar PIX agora
                   </>
                 )}
               </Button>
-
-              <p className="px-4 text-center text-[11px] font-medium leading-relaxed text-muted-foreground">
-                O pedido fica vinculado ao contato informado para agilizar seu atendimento.
-              </p>
             </>
-          )}
+          ) : null}
+
+          {step === 3 && paymentResult ? (
+            <>
+              <DialogHeader className="space-y-3 text-left">
+                <DialogTitle className="flex items-center gap-2 text-4xl leading-none text-foreground">
+                  <CheckCircle2 className="h-8 w-8 text-primary" />
+                  {paymentResult.mode === "pix" ? "PIX gerado" : "Pagamento pronto"}
+                </DialogTitle>
+                <DialogDescription className="text-sm leading-relaxed text-muted-foreground">
+                  {paymentResult.mode === "pix"
+                    ? "Use o QR Code ou copie o codigo PIX abaixo para pagar agora."
+                    : paymentResult.message ?? "Abrimos uma alternativa segura para concluir seu pagamento."}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-4 rounded-[1.5rem] border border-primary/15 bg-white/[0.03] p-5">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Produto</p>
+                  <p className="mt-2 text-2xl leading-none text-foreground">{product.name}</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">Valor</p>
+                  <p className="mt-2 text-4xl font-black leading-none text-primary">{formatPrice(product.price)}</p>
+                </div>
+              </div>
+
+              {paymentResult.mode === "pix" && paymentResult.pixCode ? (
+                <div className="space-y-4 rounded-[1.5rem] border border-primary/15 bg-white/[0.03] p-5">
+                  <div className="flex justify-center">
+                    {paymentResult.qrCodeImage ? (
+                      <img
+                        src={paymentResult.qrCodeImage}
+                        alt="QR Code PIX"
+                        className="h-52 w-52 rounded-2xl border border-primary/10 bg-white p-3"
+                      />
+                    ) : (
+                      <div className="rounded-2xl border border-primary/10 bg-white p-3">
+                        <QRCodeSVG value={paymentResult.pixCode} size={184} />
+                      </div>
+                    )}
+                  </div>
+
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.24em] text-muted-foreground">PIX copia e cola</p>
+                    <div className="mt-2 rounded-2xl border border-primary/10 bg-black/50 p-4">
+                      <p className="break-all font-mono text-xs leading-relaxed text-foreground">{paymentResult.pixCode}</p>
+                    </div>
+                  </div>
+
+                  <Button
+                    onClick={handleCopyPix}
+                    variant="outline"
+                    className="h-12 w-full rounded-full border-primary/20 bg-primary/10 text-base font-bold uppercase tracking-[0.16em] text-primary hover:bg-primary hover:text-primary-foreground"
+                  >
+                    <Copy className="h-4 w-4" />
+                    Copiar PIX
+                  </Button>
+
+                  <p className="text-center text-[11px] font-medium leading-relaxed text-muted-foreground">
+                    Apos o pagamento, a confirmacao pode levar alguns instantes.
+                  </p>
+                </div>
+              ) : null}
+
+              {paymentResult.mode === "checkout" && paymentResult.checkoutUrl ? (
+                <Button
+                  onClick={() => window.open(paymentResult.checkoutUrl, "_self")}
+                  className="h-12 w-full rounded-full bg-primary text-base font-extrabold uppercase tracking-[0.16em] text-primary-foreground hover:bg-primary"
+                  size="lg"
+                >
+                  <ExternalLink className="h-4 w-4" />
+                  Abrir checkout seguro
+                </Button>
+              ) : null}
+
+              <Button
+                onClick={handleClose}
+                variant="ghost"
+                className="h-11 w-full rounded-full text-sm font-bold uppercase tracking-[0.16em] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+              >
+                Fechar
+              </Button>
+            </>
+          ) : null}
         </div>
       </DialogContent>
     </Dialog>

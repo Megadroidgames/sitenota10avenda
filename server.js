@@ -3,7 +3,7 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createSigiloPayCheckout } from "./sigilopay.js";
+import { createSigiloPayCheckout, createSigiloPaySitePayment } from "./sigilopay.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +24,26 @@ app.post("/api/sigilopay/checkout", async (req, res) => {
   });
 
   return res.status(result.status).json(result.body);
+});
+
+app.post("/api/sigilopay/pix", async (req, res) => {
+  try {
+    const { product, contact, document, customerName, origin } = req.body ?? {};
+    const result = await createSigiloPaySitePayment({
+      product,
+      contact,
+      document,
+      customerName,
+      origin,
+      env: process.env,
+    });
+
+    return res.status(result.status).json(result.body);
+  } catch (error) {
+    return res.status(500).json({
+      message: error instanceof Error ? error.message : "Nao foi possivel acessar a base de clientes autorizados.",
+    });
+  }
 });
 
 const start = async () => {
